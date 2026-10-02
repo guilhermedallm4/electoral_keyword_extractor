@@ -30,7 +30,7 @@ Instalação em outra máquina:
 ```bash
 git clone <repo> && cd electoral_keyword_extractor
 uv venv .venv && uv pip install --python .venv/bin/python -r requirements.txt   # ou python -m venv .venv && .venv/bin/pip install -r requirements.txt
-cp .env.example .env && chmod 600 .env   # preencher
+cp -n .env.example .env && chmod 600 .env   # preencher
 .venv/bin/python -m pytest
 ```
 O LLM (Bonsai-27B + llama-server) não faz parte deste repositório: ver `~/bonsai_agent`, ou apontar `CONFIG["llm_base_url"]` para outro servidor OpenAI-compatível.
