@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Execução diária (cron): garante o LLM no ar, coleta as keywords do dia e envia o relatório
+# Execução diária (cron): garante o LLM no ar, coleta as keywords do dia e (exceto com COLLECT_ONLY=1) envia o relatório
 # para KEYWORD_EMAIL_PARA (.env). Se este script ligou o llama-server, desliga ao final (libera a GPU).
 set -uo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -22,8 +22,11 @@ if ! curl -sf -m 5 "$HEALTH" >/dev/null; then
     || echo "[$(date '+%T')] llama-server não respondeu; seguindo (prioridade cai no Jenks, notícias ficam pendentes)"
 fi
 
-# DRY_RUN=1 ./run_daily.sh  → coleta e gera a prévia do e-mail, sem enviar
-if [ "${DRY_RUN:-0}" = 1 ]; then
+# COLLECT_ONLY=1 ./run_daily.sh → só coleta (sem e-mail)
+# DRY_RUN=1 ./run_daily.sh      → coleta e gera a prévia do e-mail, sem enviar
+if [ "${COLLECT_ONLY:-0}" = 1 ]; then
+  cd "$DIR" && .venv/bin/python -m keyword_extractor --show 0
+elif [ "${DRY_RUN:-0}" = 1 ]; then
   cd "$DIR" && .venv/bin/python -m keyword_extractor --show 0 && .venv/bin/python -m keyword_extractor.report
 else
   cd "$DIR" && .venv/bin/python -m keyword_extractor --email --show 0

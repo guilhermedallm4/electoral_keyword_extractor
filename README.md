@@ -19,8 +19,9 @@ cd ~/electoral_keyword_extractor
 .venv/bin/python -m pytest                         # testes (sem rede, sem GPU)
 ```
 
-Agendamento (instalado no crontab: todo dia às 18h, fuso do sistema = America/Sao_Paulo):
+Agendamento (instalado no crontab; fuso do sistema = America/Sao_Paulo). Coleta às 12h, coleta + envio às 18h. A coleta das 12h guarda notícias que já teriam saído dos feeds até o fim da tarde:
 ```
+0 12 * * * COLLECT_ONLY=1 /home/guilhermelima/electoral_keyword_extractor/run_daily.sh
 0 18 * * * /home/guilhermelima/electoral_keyword_extractor/run_daily.sh
 ```
 O `run_daily.sh` liga o llama-server do `~/bonsai_agent` se estiver fora do ar, coleta, envia o relatório para `KEYWORD_EMAIL_PARA` e desliga o servidor se foi ele quem ligou. Usa `flock` contra execuções simultâneas e grava o log em `data/cron.log`.
