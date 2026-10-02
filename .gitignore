@@ -1,0 +1,9 @@
+# credenciais — nunca versionar
+.env
+# ambiente
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# saídas diárias (resumos de matérias, prévias de e-mail com destinatários, logs)
+data/
