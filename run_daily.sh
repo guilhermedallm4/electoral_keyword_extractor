@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Execução diária (cron): garante o LLM no ar, coleta as keywords do dia e (exceto com COLLECT_ONLY=1) envia o relatório
-# para KEYWORD_EMAIL_PARA (.env). Após o envio o llama-server é SEMPRE desligado (libera a GPU);
-# nos modos sem envio (COLLECT_ONLY/DRY_RUN) só desliga se foi este script que o ligou.
+# para KEYWORD_EMAIL_PARA (.env). Ao final o llama-server é SEMPRE desligado, em qualquer modo,
+# para não ocupar a GPU entre as execuções (12h e 18h).
 set -uo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BONSAI="$HOME/bonsai_agent"
@@ -46,10 +46,6 @@ stop_server() {
   rm -f "$BONSAI/server.pid"
 }
 
-if [ "${COLLECT_ONLY:-0}" != 1 ] && [ "${DRY_RUN:-0}" != 1 ]; then
-  stop_server                                # modo de envio: sempre derruba após o e-mail
-elif [ "$started" = 1 ]; then
-  stop_server
-fi
+stop_server                                  # sempre: a GPU fica livre até a próxima execução
 echo "===== [$(date '+%F %T')] fim (status $status)"
 exit $status
