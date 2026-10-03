@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Execução diária (cron): garante o LLM no ar, coleta as keywords do dia e (exceto com COLLECT_ONLY=1) envia o relatório
-# para KEYWORD_EMAIL_PARA (.env). Se este script ligou o llama-server, desliga ao final (libera a GPU).
+# para KEYWORD_EMAIL_PARA (.env). Após o envio o llama-server é SEMPRE desligado (libera a GPU);
+# nos modos sem envio (COLLECT_ONLY/DRY_RUN) só desliga se foi este script que o ligou.
 set -uo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BONSAI="$HOME/bonsai_agent"
@@ -33,8 +34,22 @@ else
 fi
 status=$?
 
-if [ "$started" = 1 ] && [ -f "$BONSAI/server.pid" ]; then
-  kill "$(cat "$BONSAI/server.pid")" 2>/dev/null && echo "[$(date '+%T')] llama-server desligado"
+stop_server() {
+  [ -f "$BONSAI/server.pid" ] && kill "$(cat "$BONSAI/server.pid")" 2>/dev/null
+  pkill -x llama-server 2>/dev/null   # nome exato do processo (não usa -f)
+  for _ in $(seq 1 15); do pgrep -x llama-server >/dev/null || break; sleep 1; done
+  if pgrep -x llama-server >/dev/null; then
+    pkill -9 -x llama-server; echo "[$(date '+%T')] llama-server forçado a encerrar (SIGKILL)"
+  else
+    echo "[$(date '+%T')] llama-server desligado"
+  fi
+  rm -f "$BONSAI/server.pid"
+}
+
+if [ "${COLLECT_ONLY:-0}" != 1 ] && [ "${DRY_RUN:-0}" != 1 ]; then
+  stop_server                                # modo de envio: sempre derruba após o e-mail
+elif [ "$started" = 1 ]; then
+  stop_server
 fi
 echo "===== [$(date '+%F %T')] fim (status $status)"
 exit $status

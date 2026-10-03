@@ -24,7 +24,7 @@ Agendamento (instalado no crontab; fuso do sistema = America/Sao_Paulo). Coleta 
 0 12 * * * COLLECT_ONLY=1 /home/guilhermelima/electoral_keyword_extractor/run_daily.sh
 0 18 * * * /home/guilhermelima/electoral_keyword_extractor/run_daily.sh
 ```
-O `run_daily.sh` liga o llama-server do `~/bonsai_agent` se estiver fora do ar, coleta, envia o relatório para `KEYWORD_EMAIL_PARA` e desliga o servidor se foi ele quem ligou. Usa `flock` contra execuções simultâneas e grava o log em `data/cron.log`.
+O `run_daily.sh` liga o llama-server do `~/bonsai_agent` se estiver fora do ar, coleta e envia o relatório para `KEYWORD_EMAIL_PARA`. Após o envio (18h), o servidor é **sempre** desligado. Na coleta das 12h, só é desligado se foi o script que o ligou. Usa `flock` contra execuções simultâneas e grava o log em `data/cron.log`.
 Teste sem enviar: `DRY_RUN=1 ./run_daily.sh`.
 
 Instalação em outra máquina:
