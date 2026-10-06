@@ -183,7 +183,7 @@ def test_combinacao_exige_coocorrencia():
     b = art("João da Silva visita escola; segurança pública", source="C")   # só 1 coocorrência
     for x in (a, a2):
         x.candidates = [{"keyword": "Maria Souza", "category": "person"},
-                        {"keyword": "segurança pública", "category": "topic"}]
+                        {"keyword": "segurança pública", "category": "event"}]
     b.candidates = [{"keyword": "João da Silva", "category": "person"}]
     kws, _ = build_keywords([a, a2, b], CONFIG)
     combos = [k["keyword"] for k in kws if k["category"] == "combination"]
@@ -545,3 +545,53 @@ def test_envio_smtp_usa_starttls_e_login(monkeypatch, cfg):
     out = run(now=DAY1, cfg=cfg, get=make_get(feeds()), llm=FakeLLM(TERMS))
     report.send(report.build_message(out, ENV, to=["teste@x.br"]), ENV)
     assert calls == [("connect", "smtp.test", 587), ("starttls",), ("login", "bot@gmail.com"), ("send", "teste@x.br")]
+
+
+
+# --- melhorias a partir da avaliação no Bluesky (04/10) -------------------------------------------
+def test_parentese_sem_par_vira_nome_e_sigla():
+    from keyword_extractor.extract import split_parenthetical
+    assert split_parenthetical("Lula (PT") == ["Lula", "PT"]
+    assert split_parenthetical("Supremo Tribunal Federal (STF)") == ["Supremo Tribunal Federal", "STF"]
+    assert split_parenthetical("Rio de Janeiro") == ["Rio de Janeiro"]
+    assert split_parenthetical("Senado)") == ["Senado"]
+    arts = [art("Supremo Tribunal Federal (STF) decide; Lula (PT) comenta", source="A"),
+            art("O STF e o Supremo Tribunal Federal; Lula (PT) vota", source="B")]
+    for a in arts:
+        a.candidates = [{"keyword": "Supremo Tribunal Federal (STF", "category": "organization"},
+                        {"keyword": "Lula (PT", "category": "person"}]
+    kws = {k["keyword"]: k for k in build_keywords(arts, CONFIG)[0]}
+    assert not any("(" in k or ")" in k for k in kws)
+    assert kws["Supremo Tribunal Federal"]["aliases"] == ["STF"]
+    assert "Lula" in kws and "PT" in kws
+
+
+def test_combinacao_nao_usa_tema_solto():
+    arts = [art(f"Flávio Bolsonaro no interior; debate da Globo {i}", source=f"S{i}") for i in range(3)]
+    for a in arts:
+        a.candidates = [{"keyword": "Flávio Bolsonaro", "category": "person"},
+                        {"keyword": "interior", "category": "topic"},
+                        {"keyword": "debate da Globo", "category": "event"}]
+    combos = [k["keyword"] for k in build_keywords(arts, CONFIG)[0] if k["category"] == "combination"]
+    assert combos == ["Flávio Bolsonaro debate da Globo"]
+
+
+def test_ambiguidade_medida_nas_noticias_e_consultas_com_contexto():
+    arts = [art(f"O PT e Lula lançam novo plano; Novo critica o plano novo {i}", source=f"S{i}") for i in range(3)]
+    arts.append(art("Partido Novo e o novo governo; um novo nome", source="X"))
+    for a in arts:
+        a.candidates = [{"keyword": k, "category": c} for k, c in
+                        [("PT", "organization"), ("Novo", "organization"), ("Lula", "person")]]
+    kws = {k["keyword"]: k for k in build_keywords(arts, CONFIG)[0]}
+    assert kws["PT"]["ambiguous"] == "sigla curta"
+    # 'novo' minúsculo no meio da frase domina: tratado como palavra comum (grafia e consultas)
+    assert kws["novo"]["ambiguous"] == "palavra comum"
+    assert "ambiguous" not in kws["Lula"]
+    for k in ("PT", "novo"):
+        assert kws[k]["search_queries"] and all(q != f'"{k}"' for q in kws[k]["search_queries"])
+    assert '"PT" "Lula"' in kws["PT"]["search_queries"]
+
+
+def test_saida_traz_janela_de_busca(cfg):
+    out = run(now=DAY1, cfg=cfg, get=make_get(feeds()), llm=FakeLLM(TERMS))
+    assert out["search_window"] == {"since": "2026-10-01T00:00:00-03:00", "until": "2026-10-02T00:00:00-03:00"}

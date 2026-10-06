@@ -176,6 +176,10 @@ CONFIG = {
     "combo_context_max_df": 0.15,   # contexto presente em >15% das notícias do dia não discrimina nada
     "combo_df_min_articles": 20,    # ...mas só faz sentido medir isso com volume
     "max_combo_share": 0.25,        # combinações ocupam no máximo 25% das keywords
+    "combo_context_categories": ["event"],   # combinação só entidade + evento do dia
+    # ambiguidade medida nas notícias do dia (consultas dessas keywords exigem contexto)
+    "ambiguous_max_acronym_len": 3,
+    "ambiguous_lowercase_share": 0.5,
     "max_keyword_tokens": 4,        # mais que isso costuma ser manchete, não termo de busca
     "max_search_variants_per_keyword": 3,
     "max_search_queries_per_keyword": 5,

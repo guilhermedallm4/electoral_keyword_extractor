@@ -7,3 +7,7 @@ __pycache__/
 .pytest_cache/
 # saídas diárias (resumos de matérias, prévias de e-mail com destinatários, logs)
 data/
+# dados de redes sociais (texto e usuário de pessoas reais) — não versionar
+avaliar/dados/
+avaliar/saida/
+avaliar/*.zip

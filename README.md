@@ -74,7 +74,11 @@ O LLM **só propõe** termos atômicos. Todo o resto é determinístico, porque 
   - o código aplica os cortes, de forma monotônica: nenhuma keyword mais citada fica abaixo de uma menos citada;
   - cortes inválidos ou LLM fora do ar → quebras naturais de Jenks, calculadas sobre a mesma distribuição;
   - não há limite nem proporção fixa; o registro fica em `priority_analysis` no JSON do dia.
-- **Combinações** (entidade + evento/tema extraídos do dia; sem vocabulário fixo) exigem co-ocorrência em ≥2 notícias. As consultas de busca também usam só termos do dia que co-ocorrem com a keyword. Contextos presentes em mais de 15% das notícias do dia ("primeiro turno" na semana da eleição) são ignorados. Combinações ocupam no máximo 25% das keywords.
+- **Ambiguidade medida nas notícias do dia** (sem lista fixa): sigla curta (≤3 letras) ou nome que, no meio da frase, aparece mais em minúscula ("centro", "petista"). Essas keywords recebem `"ambiguous"`, e as `search_queries` nunca trazem o termo sozinho: só com alias por extenso ou com outro termo do dia que co-ocorre com ela.
+- **Parênteses:** "Lula (PT" → "Lula" + "PT"; "Supremo Tribunal Federal (STF)" → nome com "STF" como alias.
+- **Grafia pelo uso no texto:** nome próprio com maiúsculas ("Congresso"); substantivo comum em minúscula ("título").
+- **Janela de busca:** o JSON do dia traz `search_window` (since/until), para a coleta social limitar a data.
+- **Combinações** (entidade + **evento** extraído do dia, nunca tema solto ou palavra comum; sem vocabulário fixo) exigem co-ocorrência em ≥2 notícias. As consultas de busca também usam só termos do dia que co-ocorrem com a keyword. Contextos presentes em mais de 15% das notícias do dia ("primeiro turno" na semana da eleição) são ignorados. Combinações ocupam no máximo 25% das keywords.
 
 ## Arquivos
 

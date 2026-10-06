@@ -1,0 +1,6 @@
+# análise exploratória (notebooks em avaliar/)
+pandas>=2.2
+matplotlib>=3.9
+jupyterlab>=4
+nbconvert>=7
+ipykernel>=6

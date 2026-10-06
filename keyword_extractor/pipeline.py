@@ -15,7 +15,7 @@ from .collector import collect, http_get
 from .config import CONFIG
 from .dedup import canonical_url, dedup
 from .extract import build_keywords, extract_candidates
-from .filters import filter_by_date, filter_electoral
+from .filters import day_window, filter_by_date, filter_electoral
 from .llm import LLMClient
 from .priority import classify
 from . import storage
@@ -135,6 +135,9 @@ def run(now: datetime | None = None, cfg: dict = CONFIG, get=http_get,
         "llm_error": llm_error,
         "rejected": {"no_evidence": kstats.get("rejected_no_evidence", 0),
                      "generic": kstats.get("rejected_generic", 0)},
+        # janela para a busca social: só posts publicados no dia (API do Bluesky: since/until)
+        "search_window": {"since": day_window(day, cfg["timezone"])[0].isoformat(),
+                          "until": day_window(day, cfg["timezone"])[1].isoformat()},
         "priority_analysis": analysis,
         "keywords": keywords,
     }

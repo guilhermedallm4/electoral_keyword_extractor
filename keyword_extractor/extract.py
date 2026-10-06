@@ -79,6 +79,18 @@ def clean_keyword(kw: str) -> str:
     return _LEADING_FUNCTION_WORDS.sub("", kw) if " " in kw else kw
 
 
+_PAREN = re.compile(r"^(?P<main>[^()]+?)\s*\((?P<inner>[^()]*)\)?\s*$")
+
+
+def split_parenthetical(kw: str) -> list[str]:
+    """'Supremo Tribunal Federal (STF)' / 'Lula (PT' -> ['Supremo Tribunal Federal', 'STF'] / ['Lula', 'PT'].
+    Parêntese sem par é descartado; os dois lados viram candidatos (a fusão de siglas junta STF ao nome)."""
+    m = _PAREN.match(kw)
+    if m:
+        return [p for p in (clean_keyword(m["main"]), clean_keyword(m["inner"])) if p]
+    return [clean_keyword(kw.replace("(", " ").replace(")", " "))] if ("(" in kw or ")" in kw) else [kw]
+
+
 def extract_candidates(batch: list[Article], llm: Callable[..., dict], cfg: dict) -> None:
     """Uma chamada ao LLM para o lote; grava candidatos em cada artigo (artigo vira 'processado')."""
     items = "\n".join(f"[{i}] {a.title} — {a.summary}" for i, a in enumerate(batch))
@@ -120,24 +132,35 @@ def _strip_title(kw: str, titles: list[str]) -> str:
     return " ".join(words)
 
 
-def _literal_form(form: str, texts: list[str]) -> str | None:
-    """Recupera a grafia exata usada na notícia ('joao da silva' -> 'João da Silva')."""
+def _literal_form(form: str, texts: list[str], proper: bool = True) -> str | None:
+    """Recupera a grafia usada nas notícias. Nome próprio: prefere iniciais maiúsculas
+    ('joao da silva' -> 'João da Silva'; 'Novo' não vira 'novo'). Demais: a forma proposta, se aparece
+    exatamente assim ('redes sociais' não vira 'Redes sociais' por causa de uma manchete)."""
     target = [fold(w) for w in re.findall(r"[#\w]+", form)]
     n = len(target)
+    seen = Counter()
     for text in texts:
         words = list(re.finditer(r"[#\w]+", text))
         folded = [fold(w.group()) for w in words]
         for i in range(len(words) - n + 1):
             if folded[i:i + n] == target:
-                return text[words[i].start(): words[i + n - 1].end()]
-    return None
+                seen[text[words[i].start(): words[i + n - 1].end()]] += 1
+    if not seen:
+        return None
+    if not proper:   # substantivo comum: inicial minúscula ("redes sociais", "debate da Globo"), depois frequência
+        return max(seen, key=lambda f: (f[:1].islower(), seen[f]))
+
+    def rank(f):  # "João da Silva"/"Novo" > "JOÃO DA SILVA" > "novo"; depois acentos e frequência
+        case = 2 if (any(c.isupper() for c in f) and not f.isupper()) else 1 if f.isupper() else 0
+        return (case, sum(c != fold(c) for c in f), seen[f])
+    return max(seen, key=rank)
 
 
-def _display(forms: Counter, texts: list[str]) -> str:
+def _display(forms: Counter, texts: list[str], proper: bool = True) -> str:
     def rank(f):  # mais frequente; depois com acentos; depois não-caixa-alta ("JOÃO" < "João")
         return (forms[f], sum(c != fold(c) for c in f), not f.isupper(), -len(f))
     for f in sorted(forms, key=rank, reverse=True):
-        lit = _literal_form(f, texts)
+        lit = _literal_form(f, texts, proper)
         if lit:
             return lit
     return max(forms, key=rank)
@@ -262,15 +285,17 @@ def build_keywords(articles: list[Article], cfg: dict) -> tuple[list[dict], dict
     groups: dict[str, dict] = {}
     for a in processed:
         for c in a.candidates:
-            kw = clean_keyword(c["keyword"])
-            if c["category"] == "person":
-                kw = clean_keyword(_strip_title(kw, cfg.get("person_titles", [])))  # "Ministra do TSE" -> "TSE"
-            key = entity_key(kw)
-            if not key:
-                continue
-            g = groups.setdefault(key, {"forms": Counter(), "cats": Counter()})
-            g["forms"][kw] += 1
-            g["cats"][c["category"]] += 1
+            parts = split_parenthetical(clean_keyword(c["keyword"]))
+            for i, kw in enumerate(parts):
+                cat = c["category"] if i == 0 else "organization"   # o que vem entre parênteses é sigla
+                if cat == "person":
+                    kw = clean_keyword(_strip_title(kw, cfg.get("person_titles", [])))  # "Ministra do TSE" -> "TSE"
+                key = entity_key(kw)
+                if not key:
+                    continue
+                g = groups.setdefault(key, {"forms": Counter(), "cats": Counter()})
+                g["forms"][kw] += 1
+                g["cats"][cat] += 1
 
     atomic = []
     for key, g in groups.items():
@@ -289,8 +314,16 @@ def build_keywords(articles: list[Article], cfg: dict) -> tuple[list[dict], dict
             stats["rejected_no_evidence"] += 1
             rejected["no_evidence"].append(g["forms"].most_common(1)[0][0])
             continue
-        atomic.append({"key": key, "category": g["cats"].most_common(1)[0][0],
-                       "keyword": clean_keyword(_display(g["forms"], [a.text for a in matched])),
+        cat = g["cats"].most_common(1)[0][0]
+        # nome próprio de fato? (rótulo do LLM + uso nas notícias: 'idosos' rotulado pessoa não é)
+        proper = cat in ENTITY_CATEGORIES
+        top_form = g["forms"].most_common(1)[0][0]
+        if proper and not top_form.isupper():   # sigla ("PP") segue sigla
+            # 1ª palavra no meio da frase: "avenida Paulista", "eleitores brasileiros" vs "Rio de Janeiro"
+            share = _lowercase_share(top_form.split()[0], matched)
+            proper = share is None or share <= cfg.get("ambiguous_lowercase_share", 0.5)
+        atomic.append({"key": key, "category": cat,
+                       "keyword": clean_keyword(_display(g["forms"], [a.text for a in matched], proper)),
                        "articles": matched})
 
     atomic = _merge_duplicates(atomic, cfg, stats)
@@ -317,10 +350,14 @@ def build_keywords(articles: list[Article], cfg: dict) -> tuple[list[dict], dict
               if len(articles) >= cfg.get("combo_df_min_articles", 20) else float("inf"))
     entities = [k for k in atomic if k["category"] in ENTITY_CATEGORIES]
     contexts = [k for k in atomic if k["category"] in CONTEXT_CATEGORIES and len(k["articles"]) <= max_df]
+    # combinação só com contexto do tipo evento ("debate da Globo"); tema solto ("interior", "votar")
+    # gerava pares sem sentido que quase não rendiam na busca social (avaliação Bluesky, 04/10)
+    combo_ctx = [k for k in contexts if k["category"] in cfg.get("combo_context_categories", ["event"])
+                 and not _is_common_word(k)]
     for e in entities:
         ids_e = {a.id for a in e["articles"]}
         scored = []
-        for t in contexts:
+        for t in combo_ctx:
             co = [a for a in t["articles"] if a.id in ids_e]
             if (len(co) >= cfg["min_cooccurrence_for_combo"]
                     and t["key"] not in e["key"] and e["key"] not in t["key"]
@@ -372,9 +409,13 @@ def build_keywords(articles: list[Article], cfg: dict) -> tuple[list[dict], dict
     # prioridade provisória por quebras naturais da ocorrência do dia; o pipeline refaz com o LLM
     stats["priority_analysis"] = classify(out, len(articles), llm=None)
 
+    query_ctx = contexts + [k for k in atomic if k["category"] in ENTITY_CATEGORIES | {"specific_term"}]
     for k in out:
+        amb = ambiguity(k, cfg)
+        if amb:
+            k["ambiguous"] = amb
         k["search_variants"] = search_variants(k, cfg)
-        k["search_queries"] = search_queries(k, contexts, cfg)
+        k["search_queries"] = search_queries(k, query_ctx if amb else contexts, cfg)
         k["evidence_urls"] = [a.url for a in k["_articles"][: cfg["max_evidence_urls"]] if a.url]
         for f in ("_key", "_articles"):
             k.pop(f)
@@ -392,18 +433,66 @@ def search_variants(k: dict, cfg: dict) -> list[str]:
     return v[: cfg["max_search_variants_per_keyword"]]
 
 
+def _lowercase_share(word: str, articles) -> float | None:
+    """Fração das ocorrências de `word` no meio da frase que estão em minúscula (None se não há)."""
+    target = fold(word)
+    upper = lower = 0
+    for a in articles:
+        text = a.text
+        for m in re.finditer(r"\w+", text):
+            w = m.group()
+            if fold(w) != target and stem(fold(w)) != stem(target):
+                continue
+            if _SENTENCE_START.search(text[: m.start()]):
+                continue                       # início de frase: maiúscula não diz nada
+            upper += w[0].isupper()
+            lower += w[0].islower()
+    return lower / (upper + lower) if upper + lower else None
+
+
+def _is_common_word(k: dict) -> bool:
+    """Contexto de um só token que as notícias do dia usam em minúscula no meio da frase ('votar')."""
+    if len(k["key"].split()) != 1:
+        return False
+    return ambiguity({**k, "_key": k["key"], "_articles": k["articles"], "category": "organization"},
+                     {"ambiguous_max_acronym_len": 0}) == "palavra comum"
+
+
+_SENTENCE_START = re.compile(r"(^|[.!?:;—–\-\"“(\[]\s*)$")
+
+
+def ambiguity(k: dict, cfg: dict) -> str | None:
+    """Keyword de um só token que, nas notícias DO DIA, se comporta como palavra comum ou sigla curta.
+    - sigla curta: só maiúsculas e <= N letras ("PT", "PM", "EUA");
+    - palavra comum (só nomes próprios): no meio da frase aparece mais em minúscula do que em
+      maiúscula ("Novo" → "novo", "Centro" → "centro")."""
+    if k["category"] == "combination" or len(k["_key"].split()) != 1:
+        return None
+    kw = k["keyword"]
+    if kw.isupper() and len(re.sub(r"\W", "", kw)) <= cfg.get("ambiguous_max_acronym_len", 3):
+        return "sigla curta"
+    if k["category"] not in ENTITY_CATEGORIES:
+        return None                            # tema/evento/termo é substantivo comum por natureza ("aborto")
+    share = _lowercase_share(kw, k["_articles"])
+    if share is not None and share > cfg.get("ambiguous_lowercase_share", 0.5):
+        return "palavra comum"
+    return None
+
+
 def search_queries(k: dict, contexts: list[dict], cfg: dict) -> list[str]:
     """Consultas de alta precisão: termo entre aspas + eventos/temas EXTRAÍDOS DAS NOTÍCIAS DO DIA que
-    co-ocorrem com ele (nenhum vocabulário fixo)."""
+    co-ocorrem com ele (nenhum vocabulário fixo). Keyword ambígua nunca vai sozinha: só com o alias
+    por extenso ou acompanhada de outro termo do dia que co-ocorre com ela."""
     base = f'"{k.get("components", [k["keyword"]])[0]}"'
     if k["category"] == "combination":
         qs = [f'"{k["components"][0]}" "{k["components"][1]}"', f'"{k["components"][0]}" {k["components"][1]}']
     else:
-        qs = [base] + [f'"{a}"' for a in k.get("aliases", [])[:1]]
+        aliases = [a for a in k.get("aliases", []) if not (k.get("ambiguous") and len(a.split()) == 1)]
+        qs = ([] if k.get("ambiguous") else [base]) + [f'"{a}"' for a in aliases[:1]]
         ids = {a.id for a in k["_articles"]}
         co = [(sum(a.id in ids for a in t["articles"]), t) for t in contexts
               if t["key"] not in k["_key"] and k["_key"] not in t["key"]]
-        for n, t in sorted(co, key=lambda x: (-x[0], x[1]["keyword"]))[:3]:
+        for n, t in sorted(co, key=lambda x: (-x[0], x[1]["keyword"]))[:3 if not k.get("ambiguous") else 4]:
             if n:
                 qs.append(f'{base} "{t["keyword"]}"')
     seen, out = set(), []
